@@ -40,18 +40,17 @@ func Merge(srcs []*Profile) (*Profile, error) {
 	if len(srcs) == 0 {
 		return nil, fmt.Errorf("no profiles to merge")
 	}
+	var pm profileMerger
 	p, err := combineHeaders(srcs)
 	if err != nil {
 		return nil, err
 	}
+	pm.p = p
 
-	pm := &profileMerger{
-		p:         p,
-		samples:   make(map[sampleKey]*Sample, len(srcs[0].Sample)),
-		locations: make(map[locationKey]*Location, len(srcs[0].Location)),
-		functions: make(map[functionKey]*Function, len(srcs[0].Function)),
-		mappings:  make(map[mappingKey]*Mapping, len(srcs[0].Mapping)),
-	}
+	pm.samples = make(map[sampleKey]*Sample, len(srcs[0].Sample))
+	pm.locations = make(map[locationKey]*Location, len(srcs[0].Location))
+	pm.functions = make(map[functionKey]*Function, len(srcs[0].Function))
+	pm.mappings = make(map[mappingKey]*Mapping, len(srcs[0].Mapping))
 
 	for _, src := range srcs {
 		// Clear the profile-specific hash tables
