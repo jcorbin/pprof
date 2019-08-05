@@ -192,9 +192,16 @@ func (pm *profileMerger) mapSample(src *Sample) *Sample {
 
 // key generates sampleKey to be used as a key for maps.
 func (sample *Sample) key() sampleKey {
-	ids := make([]string, len(sample.Location))
+	var ids strings.Builder
+	var idTmp [16]byte
+	if n := len(sample.Location); n > 0 {
+		ids.Grow(16*n + n - 1) // maximum hex string + separators
+	}
 	for i, l := range sample.Location {
-		ids[i] = strconv.FormatUint(l.ID, 16)
+		if i > 0 {
+			_ = ids.WriteByte('|')
+		}
+		_, _ = ids.Write(strconv.AppendUint(idTmp[:0], l.ID, 16))
 	}
 
 	labels := make([]string, 0, len(sample.Label))
@@ -210,7 +217,7 @@ func (sample *Sample) key() sampleKey {
 	sort.Strings(numlabels)
 
 	return sampleKey{
-		strings.Join(ids, "|"),
+		ids.String(),
 		strings.Join(labels, ""),
 		strings.Join(numlabels, ""),
 	}
