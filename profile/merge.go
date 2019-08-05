@@ -47,30 +47,8 @@ func Merge(srcs []*Profile) (*Profile, error) {
 	}
 	pm.p = p
 
-	pm.samples = make(map[sampleKey]*Sample, len(srcs[0].Sample))
-	pm.locations = make(map[locationKey]*Location, len(srcs[0].Location))
-	pm.functions = make(map[functionKey]*Function, len(srcs[0].Function))
-	pm.mappings = make(map[mappingKey]*Mapping, len(srcs[0].Mapping))
-
 	for _, src := range srcs {
-		// Clear the profile-specific hash tables
-		pm.locationsByID = make(map[uint64]*Location, len(src.Location))
-		pm.functionsByID = make(map[uint64]*Function, len(src.Function))
-		pm.mappingsByID = make(map[uint64]mapInfo, len(src.Mapping))
-
-		if len(pm.mappings) == 0 && len(src.Mapping) > 0 {
-			// The Mapping list has the property that the first mapping
-			// represents the main binary. Take the first Mapping we see,
-			// otherwise the operations below will add mappings in an
-			// arbitrary order.
-			pm.mapMapping(src.Mapping[0])
-		}
-
-		for _, s := range src.Sample {
-			if !isZeroSample(s) {
-				pm.mapSample(s)
-			}
-		}
+		pm.mergeOne(src)
 	}
 
 	// If there are any zero samples, re-merge the profile to GC them.
@@ -86,6 +64,41 @@ func Merge(srcs []*Profile) (*Profile, error) {
 	}
 
 	return p, nil
+}
+
+func (pm *profileMerger) mergeOne(src *Profile) {
+	// allocate memoization tables if not allocated
+	if pm.samples == nil {
+		pm.samples = make(map[sampleKey]*Sample, len(src.Sample))
+	}
+	if pm.locations == nil {
+		pm.locations = make(map[locationKey]*Location, len(src.Location))
+	}
+	if pm.functions == nil {
+		pm.functions = make(map[functionKey]*Function, len(src.Function))
+	}
+	if pm.mappings == nil {
+		pm.mappings = make(map[mappingKey]*Mapping, len(src.Mapping))
+	}
+
+	// Clear the profile-specific hash tables
+	pm.locationsByID = make(map[uint64]*Location, len(src.Location))
+	pm.functionsByID = make(map[uint64]*Function, len(src.Function))
+	pm.mappingsByID = make(map[uint64]mapInfo, len(src.Mapping))
+
+	if len(pm.mappings) == 0 && len(src.Mapping) > 0 {
+		// The Mapping list has the property that the first mapping
+		// represents the main binary. Take the first Mapping we see,
+		// otherwise the operations below will add mappings in an
+		// arbitrary order.
+		pm.mapMapping(src.Mapping[0])
+	}
+
+	for _, s := range src.Sample {
+		if !isZeroSample(s) {
+			pm.mapSample(s)
+		}
+	}
 }
 
 // Normalize normalizes the source profile by multiplying each value in profile by the
