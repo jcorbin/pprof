@@ -92,11 +92,26 @@ func (pm *profileMerger) mergeOne(src *Profile) {
 	if pm.mappings == nil {
 		pm.mappings = make(map[mappingKey]*Mapping, len(src.Mapping))
 	}
+	if pm.locationsByID == nil {
+		pm.locationsByID = make(map[uint64]*Location, len(src.Location))
+	}
+	if pm.functionsByID == nil {
+		pm.functionsByID = make(map[uint64]*Function, len(src.Function))
+	}
+	if pm.mappingsByID == nil {
+		pm.mappingsByID = make(map[uint64]mapInfo, len(src.Mapping))
+	}
 
 	// Clear the profile-specific hash tables
-	pm.locationsByID = make(map[uint64]*Location, len(src.Location))
-	pm.functionsByID = make(map[uint64]*Function, len(src.Function))
-	pm.mappingsByID = make(map[uint64]mapInfo, len(src.Mapping))
+	for k := range pm.locationsByID {
+		delete(pm.locationsByID, k)
+	}
+	for k := range pm.functionsByID {
+		delete(pm.functionsByID, k)
+	}
+	for k := range pm.mappingsByID {
+		delete(pm.mappingsByID, k)
+	}
 
 	if len(pm.mappings) == 0 && len(src.Mapping) > 0 {
 		// The Mapping list has the property that the first mapping
