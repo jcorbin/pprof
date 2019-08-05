@@ -274,14 +274,22 @@ func (l *Location) key() locationKey {
 		key.addr -= l.Mapping.Start
 		key.mappingID = l.Mapping.ID
 	}
-	lines := make([]string, len(l.Line)*2)
-	for i, line := range l.Line {
-		if line.Function != nil {
-			lines[i*2] = strconv.FormatUint(line.Function.ID, 16)
-		}
-		lines[i*2+1] = strconv.FormatInt(line.Line, 16)
+
+	var lines strings.Builder
+	if n := len(l.Line); n > 0 {
+		lines.Grow(2*n*16 + n - 1) // 2 max hex numbers and separators
 	}
-	key.lines = strings.Join(lines, "|")
+	var tmp [17]byte // signed 64-bit hex
+	for i, line := range l.Line {
+		if i > 0 {
+			_ = lines.WriteByte('|')
+		}
+		if line.Function != nil {
+			_, _ = lines.Write(strconv.AppendUint(tmp[:0], line.Function.ID, 16))
+		}
+		_, _ = lines.Write(strconv.AppendInt(tmp[:0], line.Line, 16))
+	}
+	key.lines = lines.String()
 	return key
 }
 
