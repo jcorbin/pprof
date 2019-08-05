@@ -25,7 +25,9 @@ import (
 // unreferenced fields. This is useful to reduce the size of a profile
 // after samples or locations have been removed.
 func (p *Profile) Compact() *Profile {
-	p, _ = Merge([]*Profile{p})
+	var pm ProfileMerger
+	_ = pm.combineHeaders(p)
+	pm.mergeOne(p)
 	return p
 }
 
@@ -71,7 +73,7 @@ func (pm *profileMerger) Result() *Profile {
 		}
 	}
 	if anyZero {
-		return Merge([]*Profile{p})
+		pm.compact()
 	}
 	p := pm.p
 	pm.clear()
@@ -127,6 +129,16 @@ func (pm *profileMerger) mergeOne(src *Profile) {
 			pm.mapSample(s)
 		}
 	}
+}
+
+func (pm *profileMerger) compact() {
+	p := pm.p
+	if p == nil {
+		return
+	}
+	pm.clear()
+	_ = pm.combineHeaders(p)
+	pm.mergeOne(p)
 }
 
 func (pm *profileMerger) clear() {
