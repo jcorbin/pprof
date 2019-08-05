@@ -42,7 +42,7 @@ func Merge(srcs []*Profile) (*Profile, error) {
 	if len(srcs) == 0 {
 		return nil, fmt.Errorf("no profiles to merge")
 	}
-	var pm profileMerger
+	var pm ProfileMerger
 	if err := pm.Merge(srcs); err != nil {
 		return nil, err
 	}
@@ -51,7 +51,7 @@ func Merge(srcs []*Profile) (*Profile, error) {
 
 // Merge the source profiles together using the any prior merged state, or the
 // first source profile, as a reference.
-func (pm *profileMerger) Merge(srcs []*Profile) error {
+func (pm *ProfileMerger) Merge(srcs []*Profile) error {
 	if err := pm.combineHeaders(srcs...); err != nil {
 		return err
 	}
@@ -63,7 +63,7 @@ func (pm *profileMerger) Merge(srcs []*Profile) error {
 
 // Result returns the resulting Merge()-ed profile, clearing internal state so
 // that the merger may be re-used.
-func (pm *profileMerger) Result() *Profile {
+func (pm *ProfileMerger) Result() *Profile {
 	// If there are any zero samples, re-merge the profile to GC them.
 	anyZero := false
 	for _, s := range pm.p.Sample {
@@ -80,7 +80,7 @@ func (pm *profileMerger) Result() *Profile {
 	return p
 }
 
-func (pm *profileMerger) mergeOne(src *Profile) {
+func (pm *ProfileMerger) mergeOne(src *Profile) {
 	// over-allocate memoization tables if not allocated
 	const overAlloc = 4
 	if pm.samples == nil {
@@ -131,7 +131,7 @@ func (pm *profileMerger) mergeOne(src *Profile) {
 	}
 }
 
-func (pm *profileMerger) compact() {
+func (pm *ProfileMerger) compact() {
 	p := pm.p
 	if p == nil {
 		return
@@ -141,7 +141,7 @@ func (pm *profileMerger) compact() {
 	pm.mergeOne(p)
 }
 
-func (pm *profileMerger) clear() {
+func (pm *ProfileMerger) clear() {
 	pm.p = nil
 	for k := range pm.seenComments {
 		delete(pm.seenComments, k)
@@ -204,7 +204,8 @@ func isZeroSample(s *Sample) bool {
 	return true
 }
 
-type profileMerger struct {
+// ProfileMerger supports merging compatible profiles into one resulting profile.
+type ProfileMerger struct {
 	p *Profile
 
 	// comments seen while combining profile headers
@@ -227,7 +228,7 @@ type mapInfo struct {
 	offset int64
 }
 
-func (pm *profileMerger) mapSample(src *Sample) *Sample {
+func (pm *ProfileMerger) mapSample(src *Sample) *Sample {
 	s := &Sample{
 		Location: make([]*Location, len(src.Location)),
 		Value:    make([]int64, len(src.Value)),
@@ -300,7 +301,7 @@ type sampleKey struct {
 	numlabels string
 }
 
-func (pm *profileMerger) mapLocation(src *Location) *Location {
+func (pm *ProfileMerger) mapLocation(src *Location) *Location {
 	if src == nil {
 		return nil
 	}
@@ -362,7 +363,7 @@ type locationKey struct {
 	isFolded        bool
 }
 
-func (pm *profileMerger) mapMapping(src *Mapping) mapInfo {
+func (pm *ProfileMerger) mapMapping(src *Mapping) mapInfo {
 	if src == nil {
 		return mapInfo{}
 	}
@@ -432,7 +433,7 @@ type mappingKey struct {
 	buildIDOrFile string
 }
 
-func (pm *profileMerger) mapLine(src Line) Line {
+func (pm *ProfileMerger) mapLine(src Line) Line {
 	ln := Line{
 		Function: pm.mapFunction(src.Function),
 		Line:     src.Line,
@@ -440,7 +441,7 @@ func (pm *profileMerger) mapLine(src Line) Line {
 	return ln
 }
 
-func (pm *profileMerger) mapFunction(src *Function) *Function {
+func (pm *ProfileMerger) mapFunction(src *Function) *Function {
 	if src == nil {
 		return nil
 	}
@@ -483,7 +484,7 @@ type functionKey struct {
 // combineHeaders checks that all profiles can be merged, either initializing
 // the merged profile target based on the first source profile, or re-using the
 // prior merged profile.
-func (pm *profileMerger) combineHeaders(srcs ...*Profile) error {
+func (pm *ProfileMerger) combineHeaders(srcs ...*Profile) error {
 	if pm.p != nil {
 		for _, s := range srcs {
 			if err := pm.p.compatible(s); err != nil {
