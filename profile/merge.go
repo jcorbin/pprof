@@ -147,7 +147,7 @@ type profileMerger struct {
 	p *Profile
 
 	// comments seen while combining profile headers
-	seenComments map[string]bool{}
+	seenComments map[string]struct{}
 
 	// Memoization tables within a profile.
 	locationsByID map[uint64]*Location
@@ -436,7 +436,7 @@ func (pm *profileMerger) combineHeaders(srcs ...*Profile) error {
 				return err
 			}
 		}
-		pm.seenComments = make(map[string]bool{}, len(first.Comments))
+		pm.seenComments = make(map[string]struct{}, len(first.Comments))
 		pm.p = &Profile{
 			SampleType: append([]*ValueType(nil), first.SampleType...),
 			DropFrames: first.DropFrames,
@@ -454,9 +454,9 @@ func (pm *profileMerger) combineHeaders(srcs ...*Profile) error {
 			pm.p.Period = s.Period
 		}
 		for _, c := range s.Comments {
-			if seen := pm.seenComments[c]; !seen {
+			if _, seen := pm.seenComments[c]; !seen {
 				pm.p.Comments = append(pm.p.Comments, c)
-				pm.seenComments[c] = true
+				pm.seenComments[c] = struct{}{}
 			}
 		}
 		if pm.p.DefaultSampleType == "" {
