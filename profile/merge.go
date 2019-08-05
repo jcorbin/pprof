@@ -41,11 +41,9 @@ func Merge(srcs []*Profile) (*Profile, error) {
 		return nil, fmt.Errorf("no profiles to merge")
 	}
 	var pm profileMerger
-	p, err := combineHeaders(srcs)
-	if err != nil {
+	if err := pm.combineHeaders(srcs...); err != nil {
 		return nil, err
 	}
-	pm.p = p
 
 	for _, src := range srcs {
 		pm.mergeOne(src)
@@ -147,6 +145,9 @@ func isZeroSample(s *Sample) bool {
 
 type profileMerger struct {
 	p *Profile
+
+	// comments seen while combining profile headers
+	seenComments map[string]bool{}
 
 	// Memoization tables within a profile.
 	locationsByID map[uint64]*Location
@@ -418,54 +419,52 @@ type functionKey struct {
 	name, systemName, fileName string
 }
 
-// combineHeaders checks that all profiles can be merged and returns
-// their combined profile.
-func combineHeaders(srcs []*Profile) (*Profile, error) {
-	for _, s := range srcs[1:] {
-		if err := srcs[0].compatible(s); err != nil {
-			return nil, err
-		}
-	}
-
-	var timeNanos, durationNanos, period int64
-	var comments []string
-	seenComments := map[string]bool{}
-	var defaultSampleType string
-	for _, s := range srcs {
-		if timeNanos == 0 || s.TimeNanos < timeNanos {
-			timeNanos = s.TimeNanos
-		}
-		durationNanos += s.DurationNanos
-		if period == 0 || period < s.Period {
-			period = s.Period
-		}
-		for _, c := range s.Comments {
-			if seen := seenComments[c]; !seen {
-				comments = append(comments, c)
-				seenComments[c] = true
+// combineHeaders checks that all profiles can be merged, either initializing
+// the merged profile target based on the first source profile, or re-using the
+// prior merged profile.
+func (pm *profileMerger) combineHeaders(srcs ...*Profile) error {
+	if pm.p != nil {
+		for _, s := range srcs {
+			if err := pm.p.compatible(s); err != nil {
+				return err
 			}
 		}
-		if defaultSampleType == "" {
-			defaultSampleType = s.DefaultSampleType
+	} else {
+		first := srcs[0]
+		for _, s := range srcs[1:] {
+			if err := first.compatible(s); err != nil {
+				return err
+			}
+		}
+		pm.seenComments = make(map[string]bool{}, len(first.Comments))
+		pm.p = &Profile{
+			SampleType: append([]*ValueType(nil), first.SampleType...),
+			DropFrames: first.DropFrames,
+			KeepFrames: first.KeepFrames,
+			PeriodType: first.PeriodType,
 		}
 	}
 
-	p := &Profile{
-		SampleType: make([]*ValueType, len(srcs[0].SampleType)),
-
-		DropFrames: srcs[0].DropFrames,
-		KeepFrames: srcs[0].KeepFrames,
-
-		TimeNanos:     timeNanos,
-		DurationNanos: durationNanos,
-		PeriodType:    srcs[0].PeriodType,
-		Period:        period,
-
-		Comments:          comments,
-		DefaultSampleType: defaultSampleType,
+	for _, s := range srcs {
+		if pm.p.TimeNanos == 0 || s.TimeNanos < pm.p.TimeNanos {
+			pm.p.TimeNanos = s.TimeNanos
+		}
+		pm.p.DurationNanos += s.DurationNanos
+		if pm.p.Period == 0 || pm.p.Period < s.Period {
+			pm.p.Period = s.Period
+		}
+		for _, c := range s.Comments {
+			if seen := pm.seenComments[c]; !seen {
+				pm.p.Comments = append(pm.p.Comments, c)
+				pm.seenComments[c] = true
+			}
+		}
+		if pm.p.DefaultSampleType == "" {
+			pm.p.DefaultSampleType = s.DefaultSampleType
+		}
 	}
-	copy(p.SampleType, srcs[0].SampleType)
-	return p, nil
+
+	return nil
 }
 
 // compatible determines if two profiles can be compared/merged.
