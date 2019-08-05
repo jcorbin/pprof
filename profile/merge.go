@@ -73,12 +73,16 @@ func Merge(srcs []*Profile) (*Profile, error) {
 		}
 	}
 
+	// If there are any zero samples, re-merge the profile to GC them.
+	anyZero := false
 	for _, s := range p.Sample {
 		if isZeroSample(s) {
-			// If there are any zero samples, re-merge the profile to GC
-			// them.
-			return Merge([]*Profile{p})
+			anyZero = true
+			break
 		}
+	}
+	if anyZero {
+		return Merge([]*Profile{p})
 	}
 
 	return p, nil
