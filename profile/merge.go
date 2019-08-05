@@ -79,27 +79,28 @@ func (pm *profileMerger) Result() *Profile {
 }
 
 func (pm *profileMerger) mergeOne(src *Profile) {
-	// allocate memoization tables if not allocated
+	// over-allocate memoization tables if not allocated
+	const overAlloc = 4
 	if pm.samples == nil {
-		pm.samples = make(map[sampleKey]*Sample, len(src.Sample))
+		pm.samples = make(map[sampleKey]*Sample, overAlloc*len(src.Sample))
 	}
 	if pm.locations == nil {
-		pm.locations = make(map[locationKey]*Location, len(src.Location))
+		pm.locations = make(map[locationKey]*Location, overAlloc*len(src.Location))
 	}
 	if pm.functions == nil {
-		pm.functions = make(map[functionKey]*Function, len(src.Function))
+		pm.functions = make(map[functionKey]*Function, overAlloc*len(src.Function))
 	}
 	if pm.mappings == nil {
-		pm.mappings = make(map[mappingKey]*Mapping, len(src.Mapping))
+		pm.mappings = make(map[mappingKey]*Mapping, overAlloc*len(src.Mapping))
 	}
 	if pm.locationsByID == nil {
-		pm.locationsByID = make(map[uint64]*Location, len(src.Location))
+		pm.locationsByID = make(map[uint64]*Location, overAlloc*len(src.Location))
 	}
 	if pm.functionsByID == nil {
-		pm.functionsByID = make(map[uint64]*Function, len(src.Function))
+		pm.functionsByID = make(map[uint64]*Function, overAlloc*len(src.Function))
 	}
 	if pm.mappingsByID == nil {
-		pm.mappingsByID = make(map[uint64]mapInfo, len(src.Mapping))
+		pm.mappingsByID = make(map[uint64]mapInfo, overAlloc*len(src.Mapping))
 	}
 
 	// Clear the profile-specific hash tables
