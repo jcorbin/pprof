@@ -41,17 +41,30 @@ func Merge(srcs []*Profile) (*Profile, error) {
 		return nil, fmt.Errorf("no profiles to merge")
 	}
 	var pm profileMerger
-	if err := pm.combineHeaders(srcs...); err != nil {
+	if err := pm.Merge(srcs); err != nil {
 		return nil, err
 	}
+	return pm.Result(), nil
+}
 
+// Merge the source profiles together using the any prior merged state, or the
+// first source profile, as a reference.
+func (pm *profileMerger) Merge(srcs []*Profile) error {
+	if err := pm.combineHeaders(srcs...); err != nil {
+		return err
+	}
 	for _, src := range srcs {
 		pm.mergeOne(src)
 	}
+	return nil
+}
 
+// Result returns the resulting Merge()-ed profile, clearing internal state so
+// that the merger may be re-used.
+func (pm *profileMerger) Result() *Profile {
 	// If there are any zero samples, re-merge the profile to GC them.
 	anyZero := false
-	for _, s := range p.Sample {
+	for _, s := range pm.p.Sample {
 		if isZeroSample(s) {
 			anyZero = true
 			break
@@ -60,8 +73,9 @@ func Merge(srcs []*Profile) (*Profile, error) {
 	if anyZero {
 		return Merge([]*Profile{p})
 	}
-
-	return p, nil
+	p := pm.p
+	pm.clear()
+	return p
 }
 
 func (pm *profileMerger) mergeOne(src *Profile) {
@@ -96,6 +110,25 @@ func (pm *profileMerger) mergeOne(src *Profile) {
 		if !isZeroSample(s) {
 			pm.mapSample(s)
 		}
+	}
+}
+
+func (pm *profileMerger) clear() {
+	pm.p = nil
+	for k := range pm.seenComments {
+		delete(pm.seenComments, k)
+	}
+	for k := range pm.samples {
+		delete(pm.samples, k)
+	}
+	for k := range pm.locations {
+		delete(pm.locations, k)
+	}
+	for k := range pm.functions {
+		delete(pm.functions, k)
+	}
+	for k := range pm.mappings {
+		delete(pm.mappings, k)
 	}
 }
 
