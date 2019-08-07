@@ -19,6 +19,7 @@ package profile
 import (
 	"bytes"
 	"compress/gzip"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -155,15 +156,11 @@ func Parse(r io.Reader) (*Profile, error) {
 func ParseData(data []byte) (*Profile, error) {
 	var p *Profile
 	var err error
+
 	if len(data) >= 2 && data[0] == 0x1f && data[1] == 0x8b {
-		gz, err := gzip.NewReader(bytes.NewBuffer(data))
-		if err == nil {
-			data, err = ioutil.ReadAll(gz)
-		}
-		if err != nil {
-			return nil, fmt.Errorf("decompressing profile: %v", err)
-		}
+		data, err = ungzipData(data)
 	}
+
 	if p, err = ParseUncompressed(data); err != nil && err != errNoData && err != errConcatProfile {
 		p, err = parseLegacy(data)
 	}
@@ -176,6 +173,37 @@ func ParseData(data []byte) (*Profile, error) {
 		return nil, fmt.Errorf("malformed profile: %v", err)
 	}
 	return p, nil
+}
+
+func ungzipData(data []byte) ([]byte, error) {
+	gz, err := gzip.NewReader(bytes.NewBuffer(data))
+	if err != nil {
+		return nil, fmt.Errorf("decompressing profile: %v", err)
+	}
+
+	// pre-allocate a read buffer sized from the gzip trailer uncompressed size
+	// field. This is relatively safe because `NewReader` above already
+	// verified that we have a valid gzip header; if the gzip trailer's
+	// corrupted, the final read-all will fail anyhow. However we do apply a
+	// defensive 100*compresed_size limit, to slow down the effect of things
+	// like gzip bombs (maybe in that case the buffer-growth-induced
+	// back-pressure is useful?).
+	var buf bytes.Buffer
+	size := 2 * len(data)
+	if i := len(data) - 4; i >= 0 {
+		// adapted from standard src/compress/gzip/gunzip.go circa line 259 (as of go 1.12)
+		size = int(binary.LittleEndian.Uint32(data[i:]))
+		if limit := 100 * len(data); size > limit {
+			size = limit
+		}
+	}
+	buf.Grow(size)
+
+	if _, err := buf.ReadFrom(gz); err != nil {
+		return nil, fmt.Errorf("decompressing profile: %v", err)
+	}
+
+	return buf.Bytes(), nil
 }
 
 var errUnrecognized = fmt.Errorf("unrecognized profile format")
