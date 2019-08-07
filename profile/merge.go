@@ -271,9 +271,16 @@ func (pm *ProfileMerger) mapSample(src *Sample) *Sample {
 
 // key generates sampleKey to be used as a key for maps.
 func (sample *Sample) key() sampleKey {
-	ids := make([]string, len(sample.Location))
+	var ids strings.Builder
+	var idTmp [16]byte
+	if n := len(sample.Location); n > 0 {
+		ids.Grow(16*n + n - 1) // maximum hex string + separators
+	}
 	for i, l := range sample.Location {
-		ids[i] = strconv.FormatUint(l.ID, 16)
+		if i > 0 {
+			_ = ids.WriteByte('|')
+		}
+		_, _ = ids.Write(strconv.AppendUint(idTmp[:0], l.ID, 16))
 	}
 
 	labels := make([]string, 0, len(sample.Label))
@@ -289,7 +296,7 @@ func (sample *Sample) key() sampleKey {
 	sort.Strings(numlabels)
 
 	return sampleKey{
-		strings.Join(ids, "|"),
+		ids.String(),
 		strings.Join(labels, ""),
 		strings.Join(numlabels, ""),
 	}
@@ -346,14 +353,22 @@ func (l *Location) key() locationKey {
 		key.addr -= l.Mapping.Start
 		key.mappingID = l.Mapping.ID
 	}
-	lines := make([]string, len(l.Line)*2)
-	for i, line := range l.Line {
-		if line.Function != nil {
-			lines[i*2] = strconv.FormatUint(line.Function.ID, 16)
-		}
-		lines[i*2+1] = strconv.FormatInt(line.Line, 16)
+
+	var lines strings.Builder
+	if n := len(l.Line); n > 0 {
+		lines.Grow(2*n*16 + n - 1) // 2 max hex numbers and separators
 	}
-	key.lines = strings.Join(lines, "|")
+	var tmp [17]byte // signed 64-bit hex
+	for i, line := range l.Line {
+		if i > 0 {
+			_ = lines.WriteByte('|')
+		}
+		if line.Function != nil {
+			_, _ = lines.Write(strconv.AppendUint(tmp[:0], line.Function.ID, 16))
+		}
+		_, _ = lines.Write(strconv.AppendInt(tmp[:0], line.Line, 16))
+	}
+	key.lines = lines.String()
 	return key
 }
 
