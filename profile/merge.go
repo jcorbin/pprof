@@ -25,7 +25,9 @@ import (
 // unreferenced fields. This is useful to reduce the size of a profile
 // after samples or locations have been removed.
 func (p *Profile) Compact() *Profile {
-	p, _ = Merge([]*Profile{p})
+	var pm ProfileMerger
+	_ = pm.combineHeaders(p)
+	pm.mergeOne(p)
 	return p
 }
 
@@ -40,49 +42,122 @@ func Merge(srcs []*Profile) (*Profile, error) {
 	if len(srcs) == 0 {
 		return nil, fmt.Errorf("no profiles to merge")
 	}
-	p, err := combineHeaders(srcs)
-	if err != nil {
+	var pm ProfileMerger
+	if err := pm.Merge(srcs); err != nil {
 		return nil, err
 	}
+	return pm.Result(), nil
+}
 
-	pm := &profileMerger{
-		p:         p,
-		samples:   make(map[sampleKey]*Sample, len(srcs[0].Sample)),
-		locations: make(map[locationKey]*Location, len(srcs[0].Location)),
-		functions: make(map[functionKey]*Function, len(srcs[0].Function)),
-		mappings:  make(map[mappingKey]*Mapping, len(srcs[0].Mapping)),
+// Merge the source profiles together using the any prior merged state, or the
+// first source profile, as a reference.
+func (pm *ProfileMerger) Merge(srcs []*Profile) error {
+	if err := pm.combineHeaders(srcs...); err != nil {
+		return err
 	}
-
 	for _, src := range srcs {
-		// Clear the profile-specific hash tables
-		pm.locationsByID = make(map[uint64]*Location, len(src.Location))
-		pm.functionsByID = make(map[uint64]*Function, len(src.Function))
-		pm.mappingsByID = make(map[uint64]mapInfo, len(src.Mapping))
-
-		if len(pm.mappings) == 0 && len(src.Mapping) > 0 {
-			// The Mapping list has the property that the first mapping
-			// represents the main binary. Take the first Mapping we see,
-			// otherwise the operations below will add mappings in an
-			// arbitrary order.
-			pm.mapMapping(src.Mapping[0])
-		}
-
-		for _, s := range src.Sample {
-			if !isZeroSample(s) {
-				pm.mapSample(s)
-			}
-		}
+		pm.mergeOne(src)
 	}
+	return nil
+}
 
-	for _, s := range p.Sample {
+// Result returns the resulting Merge()-ed profile, clearing internal state so
+// that the merger may be re-used.
+func (pm *ProfileMerger) Result() *Profile {
+	// If there are any zero samples, re-merge the profile to GC them.
+	anyZero := false
+	for _, s := range pm.p.Sample {
 		if isZeroSample(s) {
-			// If there are any zero samples, re-merge the profile to GC
-			// them.
-			return Merge([]*Profile{p})
+			anyZero = true
+			break
 		}
 	}
+	if anyZero {
+		pm.compact()
+	}
+	p := pm.p
+	pm.clear()
+	return p
+}
 
-	return p, nil
+func (pm *ProfileMerger) mergeOne(src *Profile) {
+	// over-allocate memoization tables if not allocated
+	const overAlloc = 4
+	if pm.samples == nil {
+		pm.samples = make(map[sampleKey]*Sample, overAlloc*len(src.Sample))
+	}
+	if pm.locations == nil {
+		pm.locations = make(map[locationKey]*Location, overAlloc*len(src.Location))
+	}
+	if pm.functions == nil {
+		pm.functions = make(map[functionKey]*Function, overAlloc*len(src.Function))
+	}
+	if pm.mappings == nil {
+		pm.mappings = make(map[mappingKey]*Mapping, overAlloc*len(src.Mapping))
+	}
+	if pm.locationsByID == nil {
+		pm.locationsByID = make(map[uint64]*Location, overAlloc*len(src.Location))
+	}
+	if pm.functionsByID == nil {
+		pm.functionsByID = make(map[uint64]*Function, overAlloc*len(src.Function))
+	}
+	if pm.mappingsByID == nil {
+		pm.mappingsByID = make(map[uint64]mapInfo, overAlloc*len(src.Mapping))
+	}
+
+	// Clear the profile-specific hash tables
+	for k := range pm.locationsByID {
+		delete(pm.locationsByID, k)
+	}
+	for k := range pm.functionsByID {
+		delete(pm.functionsByID, k)
+	}
+	for k := range pm.mappingsByID {
+		delete(pm.mappingsByID, k)
+	}
+
+	if len(pm.mappings) == 0 && len(src.Mapping) > 0 {
+		// The Mapping list has the property that the first mapping
+		// represents the main binary. Take the first Mapping we see,
+		// otherwise the operations below will add mappings in an
+		// arbitrary order.
+		pm.mapMapping(src.Mapping[0])
+	}
+
+	for _, s := range src.Sample {
+		if !isZeroSample(s) {
+			pm.mapSample(s)
+		}
+	}
+}
+
+func (pm *ProfileMerger) compact() {
+	p := pm.p
+	if p == nil {
+		return
+	}
+	pm.clear()
+	_ = pm.combineHeaders(p)
+	pm.mergeOne(p)
+}
+
+func (pm *ProfileMerger) clear() {
+	pm.p = nil
+	for k := range pm.seenComments {
+		delete(pm.seenComments, k)
+	}
+	for k := range pm.samples {
+		delete(pm.samples, k)
+	}
+	for k := range pm.locations {
+		delete(pm.locations, k)
+	}
+	for k := range pm.functions {
+		delete(pm.functions, k)
+	}
+	for k := range pm.mappings {
+		delete(pm.mappings, k)
+	}
 }
 
 // Normalize normalizes the source profile by multiplying each value in profile by the
@@ -129,8 +204,12 @@ func isZeroSample(s *Sample) bool {
 	return true
 }
 
-type profileMerger struct {
+// ProfileMerger supports merging compatible profiles into one resulting profile.
+type ProfileMerger struct {
 	p *Profile
+
+	// comments seen while combining profile headers
+	seenComments map[string]struct{}
 
 	// Memoization tables within a profile.
 	locationsByID map[uint64]*Location
@@ -149,7 +228,7 @@ type mapInfo struct {
 	offset int64
 }
 
-func (pm *profileMerger) mapSample(src *Sample) *Sample {
+func (pm *ProfileMerger) mapSample(src *Sample) *Sample {
 	s := &Sample{
 		Location: make([]*Location, len(src.Location)),
 		Value:    make([]int64, len(src.Value)),
@@ -222,7 +301,7 @@ type sampleKey struct {
 	numlabels string
 }
 
-func (pm *profileMerger) mapLocation(src *Location) *Location {
+func (pm *ProfileMerger) mapLocation(src *Location) *Location {
 	if src == nil {
 		return nil
 	}
@@ -284,7 +363,7 @@ type locationKey struct {
 	isFolded        bool
 }
 
-func (pm *profileMerger) mapMapping(src *Mapping) mapInfo {
+func (pm *ProfileMerger) mapMapping(src *Mapping) mapInfo {
 	if src == nil {
 		return mapInfo{}
 	}
@@ -354,7 +433,7 @@ type mappingKey struct {
 	buildIDOrFile string
 }
 
-func (pm *profileMerger) mapLine(src Line) Line {
+func (pm *ProfileMerger) mapLine(src Line) Line {
 	ln := Line{
 		Function: pm.mapFunction(src.Function),
 		Line:     src.Line,
@@ -362,7 +441,7 @@ func (pm *profileMerger) mapLine(src Line) Line {
 	return ln
 }
 
-func (pm *profileMerger) mapFunction(src *Function) *Function {
+func (pm *ProfileMerger) mapFunction(src *Function) *Function {
 	if src == nil {
 		return nil
 	}
@@ -402,54 +481,52 @@ type functionKey struct {
 	name, systemName, fileName string
 }
 
-// combineHeaders checks that all profiles can be merged and returns
-// their combined profile.
-func combineHeaders(srcs []*Profile) (*Profile, error) {
-	for _, s := range srcs[1:] {
-		if err := srcs[0].compatible(s); err != nil {
-			return nil, err
-		}
-	}
-
-	var timeNanos, durationNanos, period int64
-	var comments []string
-	seenComments := map[string]bool{}
-	var defaultSampleType string
-	for _, s := range srcs {
-		if timeNanos == 0 || s.TimeNanos < timeNanos {
-			timeNanos = s.TimeNanos
-		}
-		durationNanos += s.DurationNanos
-		if period == 0 || period < s.Period {
-			period = s.Period
-		}
-		for _, c := range s.Comments {
-			if seen := seenComments[c]; !seen {
-				comments = append(comments, c)
-				seenComments[c] = true
+// combineHeaders checks that all profiles can be merged, either initializing
+// the merged profile target based on the first source profile, or re-using the
+// prior merged profile.
+func (pm *ProfileMerger) combineHeaders(srcs ...*Profile) error {
+	if pm.p != nil {
+		for _, s := range srcs {
+			if err := pm.p.compatible(s); err != nil {
+				return err
 			}
 		}
-		if defaultSampleType == "" {
-			defaultSampleType = s.DefaultSampleType
+	} else {
+		first := srcs[0]
+		for _, s := range srcs[1:] {
+			if err := first.compatible(s); err != nil {
+				return err
+			}
+		}
+		pm.seenComments = make(map[string]struct{}, len(first.Comments))
+		pm.p = &Profile{
+			SampleType: append([]*ValueType(nil), first.SampleType...),
+			DropFrames: first.DropFrames,
+			KeepFrames: first.KeepFrames,
+			PeriodType: first.PeriodType,
 		}
 	}
 
-	p := &Profile{
-		SampleType: make([]*ValueType, len(srcs[0].SampleType)),
-
-		DropFrames: srcs[0].DropFrames,
-		KeepFrames: srcs[0].KeepFrames,
-
-		TimeNanos:     timeNanos,
-		DurationNanos: durationNanos,
-		PeriodType:    srcs[0].PeriodType,
-		Period:        period,
-
-		Comments:          comments,
-		DefaultSampleType: defaultSampleType,
+	for _, s := range srcs {
+		if pm.p.TimeNanos == 0 || s.TimeNanos < pm.p.TimeNanos {
+			pm.p.TimeNanos = s.TimeNanos
+		}
+		pm.p.DurationNanos += s.DurationNanos
+		if pm.p.Period == 0 || pm.p.Period < s.Period {
+			pm.p.Period = s.Period
+		}
+		for _, c := range s.Comments {
+			if _, seen := pm.seenComments[c]; !seen {
+				pm.p.Comments = append(pm.p.Comments, c)
+				pm.seenComments[c] = struct{}{}
+			}
+		}
+		if pm.p.DefaultSampleType == "" {
+			pm.p.DefaultSampleType = s.DefaultSampleType
+		}
 	}
-	copy(p.SampleType, srcs[0].SampleType)
-	return p, nil
+
+	return nil
 }
 
 // compatible determines if two profiles can be compared/merged.
